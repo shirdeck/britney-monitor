@@ -43,11 +43,15 @@ function extractShortcode(html) {
   if (!html) return null;
 
   // Primary pattern
-  let m = html.match(/"shortcode":"([A-Za-z0-9_-]{5,})"/);
+  let m = html.match(/"shortcode"\s*:\s*"([A-Za-z0-9_-]{5,})"/);
   if (m) return m[1];
 
-  // Fallback pattern: sometimes appears as \u0022shortcode\u0022:\u0022CODE\u0022
+  // Escaped Unicode fallback (e.g. \\u0022shortcode\\u0022:\\u0022CODE\\u0022)
   m = html.match(/\\u0022shortcode\\u0022:\\u0022([A-Za-z0-9_-]{5,})\\u0022/);
+  if (m) return m[1];
+
+  // JSON-LD fallback (some profiles serve structured data)
+  m = html.match(/instagram\.com\/p\/([A-Za-z0-9_-]{5,})/);
   if (m) return m[1];
 
   return null;
