@@ -18,43 +18,47 @@ async function fetchHtml(url) {
 }
 
 async function getProfileHtml(profile) {
-  // 1) Try Instagram directly
+  // Attempt Instagram directly first
   let resp = await fetchHtml(`https://www.instagram.com/${profile}/`);
-  if (resp.ok) return await resp.text();
-
-  // 2) If rate-limited, fallback to a public mirror
-  if ([429, 403, 401, 500].includes(resp.status)) {
-    console.log("Primary fetch failed with", resp.status, "— using mirror");
-    const alt = await fetchHtml(
-      `https://r.jina.ai/http://www.instagram.com/${profile}/`
-    );
-    if (alt.ok) return await alt.text();
+  if (resp.ok) {
+    const text = await resp.text();
+    // if it contains typical IG JSON, use it
+    if (text.includes('"shortcode"')) return text;
+    // if it looks like the shell, fall back
+    console.log("Got login wall shell, using mirror instead");
+  } else {
+    console.log("Primary fetch failed:", resp.status);
   }
 
-  console.log("Fetch failed with HTTP", resp.status);
+  // Mirror #1 — Jina AI reader
+  const alt = await fetchHtml(`https://r.jina.ai/http://www.instagram.com/${profile}/`);
+  if (alt.ok) return await alt.text();
+
+  // Mirror #2 — textise dot iitty workaround
+  const alt2 = await fetchHtml(`https://r.jina.ai/http://textise dot iitty workaround`);
+  if (alt2.ok) return await alt2.text();
+
+  console.log("All fetch attempts failed");
   return null;
 }
+
 
 function extractShortcode(html) {
   if (!html) return null;
 
-  // 1. Regular pattern
+  // 1. Normal JSON
   let m = html.match(/"shortcode"\s*:\s*"([A-Za-z0-9_-]{5,})"/);
   if (m) return m[1];
 
-  // 2. Escaped Unicode version
+  // 2. Escaped Unicode JSON
   m = html.match(/\\u0022shortcode\\u0022\\s*:\\s*\\u0022([A-Za-z0-9_-]{5,})\\u0022/);
   if (m) return m[1];
 
-  // 3. HTML href="/p/XXXX/"
+  // 3. HTML href=/p/XXXX/
   m = html.match(/href="\/p\/([A-Za-z0-9_-]{5,})\//);
   if (m) return m[1];
 
-  // 4. Escaped href JSON
-  m = html.match(/"href":"\\\/p\\\/([A-Za-z0-9_-]{5,})\\\//);
-  if (m) return m[1];
-
-  // 5. Any instagram.com/p/ reference
+  // 4. Any instagram.com/p/ reference (useful for mirrors)
   m = html.match(/instagram\.com\/p\/([A-Za-z0-9_-]{5,})/);
   if (m) return m[1];
 
