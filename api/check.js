@@ -1,11 +1,8 @@
-// api/check.js
-// Node 20+ has global fetch
-
 const fs = require("fs");
 const path = require("path");
 
 function sleep(ms) {
-  return new Promise(r => setTimeout(r, ms));
+  return new Promise((r) => setTimeout(r, ms));
 }
 
 async function fetchHtml(url) {
@@ -14,27 +11,26 @@ async function fetchHtml(url) {
       "User-Agent":
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
       "Accept-Language": "en-US,en;q=0.9",
-      "Cache-Control": "no-cache"
-    }
+      "Cache-Control": "no-cache",
+    },
   });
   return resp;
 }
 
 async function getProfileHtml(profile) {
-  // 1) try Instagram directly
+  // 1) Try Instagram directly
   let resp = await fetchHtml(`https://www.instagram.com/${profile}/`);
   if (resp.ok) return await resp.text();
 
-  // 2) if rate-limited or other failure, fall back to a read-only mirror
-  // This simply fetches the public page through a third-party reader.
-  // It reduces the chance of 429 on shared GitHub IPs.
-  // If this mirror ever changes, we’ll swap it out.
-  if (resp.status === 429 || resp.status === 403 || resp.status === 401 || resp.status === 500) {
-    const alt = await fetchHtml(`https://r.jina.ai/http://www.instagram.com/${profile}/`);
+  // 2) If rate-limited, fallback to a public mirror
+  if ([429, 403, 401, 500].includes(resp.status)) {
+    console.log("Primary fetch failed with", resp.status, "— using mirror");
+    const alt = await fetchHtml(
+      `https://r.jina.ai/http://www.instagram.com/${profile}/`
+    );
     if (alt.ok) return await alt.text();
   }
 
-  // give up for this run
   console.log("Fetch failed with HTTP", resp.status);
   return null;
 }
@@ -42,15 +38,23 @@ async function getProfileHtml(profile) {
 function extractShortcode(html) {
   if (!html) return null;
 
-  // Primary pattern
+  // 1. Regular pattern
   let m = html.match(/"shortcode"\s*:\s*"([A-Za-z0-9_-]{5,})"/);
   if (m) return m[1];
 
-  // Escaped Unicode fallback (e.g. \\u0022shortcode\\u0022:\\u0022CODE\\u0022)
-  m = html.match(/\\u0022shortcode\\u0022:\\u0022([A-Za-z0-9_-]{5,})\\u0022/);
+  // 2. Escaped Unicode version
+  m = html.match(/\\u0022shortcode\\u0022\\s*:\\s*\\u0022([A-Za-z0-9_-]{5,})\\u0022/);
   if (m) return m[1];
 
-  // JSON-LD fallback (some profiles serve structured data)
+  // 3. HTML href="/p/XXXX/"
+  m = html.match(/href="\/p\/([A-Za-z0-9_-]{5,})\//);
+  if (m) return m[1];
+
+  // 4. Escaped href JSON
+  m = html.match(/"href":"\\\/p\\\/([A-Za-z0-9_-]{5,})\\\//);
+  if (m) return m[1];
+
+  // 5. Any instagram.com/p/ reference
   m = html.match(/instagram\.com\/p\/([A-Za-z0-9_-]{5,})/);
   if (m) return m[1];
 
@@ -62,8 +66,8 @@ async function main() {
   const IFTTT_EVENT = process.env.IFTTT_EVENT || "britney_post";
   const PROFILE = process.env.IG_PROFILE || "britneyspears";
 
-  // small random jitter so we don’t always hit at the exact same second
-  const jitter = Math.floor(5000 + Math.random() * 20000); // 5–25s
+  // random delay 15–60s to avoid rate limit
+  const jitter = Math.floor(15000 + Math.random() * 45000);
   await sleep(jitter);
 
   const statePath = path.join(process.cwd(), "last_seen.json");
@@ -79,7 +83,8 @@ async function main() {
 
   const shortcode = extractShortcode(html);
   if (!shortcode) {
-    console.log("No shortcode found. Layout may have changed.");
+    console.log("No shortcode found. First 400 chars of HTML:");
+    console.log(html.slice(0, 400));
     return;
   }
 
@@ -96,16 +101,25 @@ async function main() {
     console.log("Missing IFTTT_KEY. Skipping notification.");
   } else {
     const hook = `https://maker.ifttt.com/trigger/${IFTTT_EVENT}/with/key/${IFTTT_KEY}`;
-    const body = { value1: shortcode, value2: new Date().toISOString(), value3: postUrl };
-    const notif = await fetch(hook, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body)
-    });
-    if (!notif.ok) {
-      console.error("IFTTT error:", notif.status, await notif.text());
-    } else {
-      console.log("IFTTT notified.");
+    const payload = {
+      value1: shortcode,
+      value2: new Date().toISOString(),
+      value3: postUrl,
+    };
+
+    try {
+      const res = await fetch(hook, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (res.ok) {
+        console.log("IFTTT notified successfully.");
+      } else {
+        console.log("IFTTT error:", res.status, await res.text());
+      }
+    } catch (err) {
+      console.log("Error calling IFTTT:", err.message);
     }
   }
 
@@ -113,6 +127,4 @@ async function main() {
   fs.writeFileSync(statePath, JSON.stringify(state));
 }
 
-main().catch(err => {
-  console.error("Script error:", err.message);
-});
+main().catch((err) => console.error("Script error:", err.message));
