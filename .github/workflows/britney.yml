@@ -1,0 +1,37 @@
+name: Britney Monitor
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"   # every 5 minutes
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Use Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Run monitor
+        env:
+          IFTTT_KEY: ${{ secrets.IFTTT_KEY }}
+          IFTTT_EVENT: ${{ secrets.IFTTT_EVENT }}
+          IG_PROFILE: britneyspears
+        run: |
+          node api/check.js
+
+      - name: Persist last_seen.json
+        run: |
+          if [ -f last_seen.json ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add last_seen.json
+            git commit -m "chore: update last_seen" || echo "No changes"
+            git push
+          fi
